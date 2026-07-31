@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { isFirebaseConfigured, loadFromCloud, saveToCloud } from './firebase';
+import { buildSubjectComparison, buildSubjectDetailData, buildSubjectGrowth, buildTrendData } from './statistics';
 
 type Subject = '국어(화법과 작문)' | '수학(확률과 통계)' | '영어' | '한국사' | '경제' | '사회문화';
 
@@ -116,10 +118,7 @@ const initialPlans: StudyPlan[] = [
   },
 ];
 
-const initialSessions: StudySession[] = [
-  { id: 'session-1', subject: '수학(확률과 통계)', area: '확률', duration: 90, date: '2026-07-31', memo: '문제풀이' },
-  { id: 'session-2', subject: '영어', area: '단어', duration: 45, date: '2026-07-31', memo: '암기' },
-];
+const initialSessions: StudySession[] = [];
 
 const initialExams: MockExam[] = [
   {
@@ -218,6 +217,8 @@ function App() {
   });
   const [notificationSetting, setNotificationSetting] = useState<NotificationSetting>({ enabled: false, time: '21:00' });
   const [cloudStatus, setCloudStatus] = useState(isFirebaseConfigured ? '클라우드 저장 준비됨' : '데모 Firebase 설정으로 로컬 저장만 사용 중');
+  const [statsRange, setStatsRange] = useState<'day' | 'week' | 'month'>('week');
+  const [selectedSubject, setSelectedSubject] = useState<Subject | '전체'>('전체');
 
   useEffect(() => {
     localStorage.setItem('study-plans', JSON.stringify(plans));
@@ -361,8 +362,18 @@ function App() {
     setNewNote({ title: '', subject: '국어(화법과 작문)', reason: '개념 부족', reviewDate: getToday(), memo: '' });
   };
 
+  const deleteSession = (id: string) => {
+    if (!window.confirm('이 공부 기록을 삭제할까요?')) return;
+    setSessions((prev) => prev.filter((session) => session.id !== id));
+  };
+
   const toggleNoteStatus = (id: string) => {
     setNotes((prev) => prev.map((note) => (note.id === id ? { ...note, status: note.status === '미복습' ? '복습 완료' : '미복습' } : note)));
+  };
+
+  const deleteNote = (id: string) => {
+    if (!window.confirm('이 복습 항목을 삭제할까요?')) return;
+    setNotes((prev) => prev.filter((note) => note.id !== id));
   };
 
   const addExam = () => {
@@ -434,6 +445,24 @@ function App() {
   };
 
   const totalStudyTime = Math.round(totalHours / 60);
+
+  const trendData = useMemo(() => {
+    const filteredSessions = selectedSubject === '전체' ? sessions : sessions.filter((session) => session.subject === selectedSubject);
+    return buildTrendData(filteredSessions, statsRange);
+  }, [sessions, selectedSubject, statsRange]);
+
+  const subjectComparison = useMemo(() => buildSubjectComparison(sessions, subjectOptions), [sessions]);
+
+  const subjectGrowth = useMemo(() => buildSubjectGrowth(sessions, subjectOptions), [sessions]);
+
+  const selectedSubjectDetailData = useMemo(() => {
+    if (selectedSubject === '전체') {
+      return buildTrendData(sessions, statsRange);
+    }
+    return buildSubjectDetailData(sessions, selectedSubject, statsRange);
+  }, [sessions, selectedSubject, statsRange]);
+
+  const maxSubjectMinutes = Math.max(...subjectComparison.map((item) => item.minutes), 1);
 
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
@@ -667,10 +696,13 @@ function App() {
           </div>
           <div className="card">
             <h3>오늘의 공부 기록</h3>
-            {sessions.map((session) => (
+            {sessions.length === 0 ? <p>아직 기록된 공부 시간이 없습니다.</p> : sessions.map((session) => (
               <div key={session.id} className="row" style={{ justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
                 <span>{session.subject} · {session.area} · {session.duration}분</span>
-                <span>{session.memo}</span>
+                <div className="row">
+                  <span style={{ marginRight: 8 }}>{session.memo}</span>
+                  <button onClick={() => deleteSession(session.id)} style={{ padding: '6px 10px', borderRadius: 999, border: '1px solid #fecaca', color: '#b91c1c' }}>삭제</button>
+                </div>
               </div>
             ))}
           </div>
@@ -681,17 +713,82 @@ function App() {
         <div className="grid">
           <div className="card">
             <h3>학습 통계 요약</h3>
-            <p>총 공부 시간: {totalStudyTime}시간</p>
-            <p>완료한 계획 수: {completedCount}개</p>
-            <p>이번 주 공부 시간: {Math.round(weeklyHours / 60)}시간</p>
+            <div className="grid grid-2">
+              <div className="card" style={{ background: '#f8fafc' }}>
+                <p style={{ margin: 0, color: '#6b7280' }}>총 공부 시간</p>
+                <h2 style={{ margin: '4px 0' }}>{totalStudyTime}시간</h2>
+              </div>
+              <div className="card" style={{ background: '#f8fafc' }}>
+                <p style={{ margin: 0, color: '#6b7280' }}>이번 주</p>
+                <h2 style={{ margin: '4px 0' }}>{Math.round(weeklyHours / 60)}시간</h2>
+              </div>
+            </div>
+            <p style={{ margin: '8px 0 0' }}>완료한 계획 수: {completedCount}개</p>
             <p>계획 달성률: {achievedRate}%</p>
           </div>
+
+          <div className="card stats-shell">
+            <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+              <h3 style={{ margin: 0 }}>공부 패턴 차트</h3>
+              <div className="row">
+                <button onClick={() => setStatsRange('day')} className={`pill-button ${statsRange === 'day' ? 'active' : ''}`}>일</button>
+                <button onClick={() => setStatsRange('week')} className={`pill-button ${statsRange === 'week' ? 'active' : ''}`}>주</button>
+                <button onClick={() => setStatsRange('month')} className={`pill-button ${statsRange === 'month' ? 'active' : ''}`}>월</button>
+              </div>
+            </div>
+            <div className="row" style={{ marginBottom: 12 }}>
+              <select value={selectedSubject} onChange={(e) => setSelectedSubject(e.target.value as Subject | '전체')} className="stats-select">
+                <option value="전체">전체 과목</option>
+                {subjectOptions.map((subject) => <option key={subject} value={subject}>{subject}</option>)}
+              </select>
+            </div>
+            <div style={{ width: '100%', height: 240 }}>
+              <ResponsiveContainer>
+                <LineChart data={trendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 12 }} />
+                  <YAxis tick={{ fill: '#64748b', fontSize: 12 }} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="minutes" stroke="#6366f1" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="card" style={{ marginTop: 12, background: 'linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%)' }}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <strong>{selectedSubject === '전체' ? '전체 과목' : selectedSubject}</strong>
+                <span className="badge">{selectedSubjectDetailData.reduce((sum, item) => sum + item.minutes, 0)}분</span>
+              </div>
+            </div>
+          </div>
+
           <div className="card">
-            <h3>과목별 공부 시간</h3>
-            {subjectOptions.map((subject) => {
-              const minutes = sessions.filter((s) => s.subject === subject).reduce((sum, s) => sum + s.duration, 0);
-              return <div key={subject} className="row" style={{ justifyContent: 'space-between', padding: '6px 0' }}><span>{subject}</span><strong>{Math.round(minutes / 60)}시간</strong></div>;
-            })}
+            <h3>과목별 공부 시간 비교</h3>
+            <div style={{ width: '100%', height: 220 }}>
+              <ResponsiveContainer>
+                <LineChart data={subjectComparison.map((item) => ({ label: item.subject, minutes: item.minutes }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="label" angle={-20} textAnchor="end" height={70} tick={{ fill: '#64748b', fontSize: 11 }} />
+                  <YAxis tick={{ fill: '#64748b', fontSize: 12 }} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="minutes" stroke="#f59e0b" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3>과목별 성장 추세</h3>
+            {subjectGrowth.map((item) => (
+              <div key={item.subject} className="subject-growth-item" onClick={() => setSelectedSubject(item.subject as Subject)} style={{ marginTop: 10, padding: 10, borderRadius: 12, border: item.subject === selectedSubject ? '1px solid #c7d2fe' : '1px solid #e5e7eb', background: item.subject === selectedSubject ? '#f5f3ff' : 'white', cursor: 'pointer' }}>
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <span>{item.subject}</span>
+                  <strong>{item.recent}분 / 이전 {item.previous}분</strong>
+                </div>
+                <div style={{ height: 8, background: '#e5e7eb', borderRadius: 999, overflow: 'hidden', marginTop: 6 }}>
+                  <div style={{ width: `${Math.min(100, (item.recent / Math.max(item.previous + 1, 1)) * 100)}%`, height: '100%', background: item.recent >= item.previous ? '#10b981' : '#ef4444', borderRadius: 999 }} />
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -724,7 +821,10 @@ function App() {
                 <p style={{ margin: '6px 0' }}>{note.subject} · {note.reason}</p>
                 <div className="row" style={{ justifyContent: 'space-between' }}>
                   <span>다음 복습: {note.reviewDate}</span>
-                  <button onClick={() => toggleNoteStatus(note.id)} style={{ padding: '6px 10px', borderRadius: 999, border: '1px solid #d1d5db' }}>{note.status === '미복습' ? '복습 완료' : '미복습으로 변경'}</button>
+                  <div className="row">
+                    <button onClick={() => toggleNoteStatus(note.id)} style={{ padding: '6px 10px', borderRadius: 999, border: '1px solid #d1d5db', marginRight: 8 }}>{note.status === '미복습' ? '복습 완료' : '미복습으로 변경'}</button>
+                    <button onClick={() => deleteNote(note.id)} style={{ padding: '6px 10px', borderRadius: 999, border: '1px solid #fecaca', color: '#b91c1c' }}>삭제</button>
+                  </div>
                 </div>
               </div>
             ))}
