@@ -604,21 +604,33 @@ function App() {
   const totalStudyTime = Math.round(totalHours / 60);
   const todaySessions = useMemo(() => sessions.filter((session) => session.date === getToday()), [sessions]);
 
-  // Build a 24h x N-segments grid (segments = 10min) where each cell is a subject key or null
+  // Build a 24h x 6-cell grid, but each cell shows 10 minute-level subsegments.
   const timetableGrid = useMemo(() => {
-    const segmentLength = 10; // minutes per cell (10-minute granularity)
-    const segmentsPerHour = 60 / segmentLength; // 6
-    const grid: (string | null)[][] = Array.from({ length: 24 }, () => Array.from({ length: segmentsPerHour }, () => null));
+    const segmentLength = 10;
+    const segmentsPerHour = 60 / segmentLength;
+    const grid: Array<Array<{ subject: Subject | null; minutes: Array<Subject | null> }>> = Array.from({ length: 24 }, () =>
+      Array.from({ length: segmentsPerHour }, () => ({
+        subject: null,
+        minutes: Array.from({ length: segmentLength }, () => null),
+      }))
+    );
 
     todaySessions.forEach((session) => {
       const start = session.startTime ? new Date(session.startTime) : new Date(`${session.date}T09:00:00`);
       const startMinute = start.getHours() * 60 + start.getMinutes();
       const endMinute = startMinute + Math.max(1, session.duration);
+
       for (let m = startMinute; m < endMinute; m++) {
         const minuteOfDay = ((m % (24 * 60)) + (24 * 60)) % (24 * 60);
         const hour = Math.floor(minuteOfDay / 60);
-        const segmentIndex = Math.floor((minuteOfDay % 60) / segmentLength);
-        grid[hour][segmentIndex] = session.subject;
+        const minuteInHour = minuteOfDay % 60;
+        const segmentIndex = Math.floor(minuteInHour / segmentLength);
+        const minuteOffset = minuteInHour % segmentLength;
+        const cell = grid[hour][segmentIndex];
+        cell.minutes[minuteOffset] = session.subject;
+        if (!cell.subject) {
+          cell.subject = session.subject;
+        }
       }
     });
 
@@ -977,10 +989,21 @@ function App() {
                           <div
                             key={`${hour}-${idx}`}
                             className="timetable-cell"
-                            title={cell ?? ''}
-                            style={{ background: cell ? subjectColors[cell] : 'transparent', cursor: 'pointer' }}
-                            onClick={() => { setEditingCell({ hour, idx }); setEditingSubject((cell as Subject) ?? '국어(화법과 작문)'); }}
-                          />
+                            title={cell.subject ?? ''}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => { setEditingCell({ hour, idx }); setEditingSubject((cell.subject as Subject) ?? '국어(화법과 작문)'); }}
+                          >
+                            {Array.from({ length: 10 }, (_, minuteIndex) => {
+                              const subject = cell.minutes[minuteIndex];
+                              return (
+                                <div
+                                  key={`${hour}-${idx}-${minuteIndex}`}
+                                  className="timetable-minute"
+                                  style={{ background: subject ? subjectColors[subject] ?? '#60a5fa' : 'transparent' }}
+                                />
+                              );
+                            })}
+                          </div>
                         ))}
                       </div>
                     </div>
