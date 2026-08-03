@@ -30,6 +30,7 @@ type StudySession = {
   date: string;
   memo: string;
   startTime?: string;
+  endTime?: string;
 };
 
 type WrongAnswer = {
@@ -192,6 +193,7 @@ function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [timerStartedAt, setTimerStartedAt] = useState<string | null>(null);
   const [timerDeadline, setTimerDeadline] = useState<number | null>(null);
+  const [timerSessionId, setTimerSessionId] = useState<string | null>(null);
   const [timerMode, setTimerMode] = useState<'집중' | '휴식'>('집중');
   const [timerSubject, setTimerSubject] = useState<Subject>('국어(화법과 작문)');
   const [timerArea, setTimerArea] = useState('');
@@ -237,24 +239,27 @@ function App() {
   }, [notes]);
 
   const finishTimer = useCallback(() => {
-    const duration = Math.max(1, timerMinutes);
+    const durationSeconds = Math.max(60, timerMinutes * 60);
     const startedAt = timerStartedAt ?? new Date().toISOString();
+    const duration = Math.max(1, Math.round(durationSeconds / 60));
     const session: StudySession = {
-      id: crypto.randomUUID(),
+      id: timerSessionId ?? crypto.randomUUID(),
       subject: timerSubject,
       area: timerArea,
       duration,
       date: getToday(),
       memo: timerMemo || `${timerMode} 시간 완료`,
       startTime: startedAt,
+      endTime: new Date().toISOString(),
     };
     setSessions((prevSessions) => [session, ...prevSessions]);
     setTimeLeft(0);
     setIsRunning(false);
     setTimerStartedAt(null);
     setTimerDeadline(null);
+    setTimerSessionId(null);
     window.alert(`${timerMode} 시간이 종료되었습니다.`);
-  }, [timerArea, timerMemo, timerMinutes, timerMode, timerStartedAt, timerSubject]);
+  }, [timerArea, timerMemo, timerMinutes, timerMode, timerSessionId, timerStartedAt, timerSubject]);
 
   useEffect(() => {
     if (!isRunning || !timerDeadline) return;
@@ -301,8 +306,9 @@ function App() {
       timerMemo,
       timerStartedAt,
       timerDeadline,
+      timerSessionId,
     }));
-  }, [isRunning, timeLeft, timerArea, timerDeadline, timerMemo, timerMinutes, timerMode, timerStartedAt, timerSubject]);
+  }, [isRunning, timeLeft, timerArea, timerDeadline, timerMemo, timerMinutes, timerMode, timerStartedAt, timerSessionId, timerSubject]);
 
   useEffect(() => {
     if (!notificationSetting.enabled || !('Notification' in window) || Notification.permission !== 'granted') {
@@ -385,18 +391,35 @@ function App() {
   const startTimer = () => {
     const durationSeconds = Math.max(60, timerMinutes * 60);
     const startedAt = new Date();
+    const sessionId = crypto.randomUUID();
     setTimeLeft(durationSeconds);
     setTimerStartedAt(startedAt.toISOString());
     setTimerDeadline(startedAt.getTime() + durationSeconds * 1000);
+    setTimerSessionId(sessionId);
     setIsRunning(true);
   };
 
   const pauseTimer = () => {
+    if (!isRunning || !timerSessionId || !timerStartedAt) return;
+    const elapsedSeconds = Math.max(1, Math.round((Date.now() - new Date(timerStartedAt).getTime()) / 1000));
+    const minutes = Math.max(1, Math.round(elapsedSeconds / 60));
+    const session: StudySession = {
+      id: timerSessionId,
+      subject: timerSubject,
+      area: timerArea,
+      duration: minutes,
+      date: getToday(),
+      memo: timerMemo || `${timerMode} 시간 완료`,
+      startTime: timerStartedAt,
+      endTime: new Date().toISOString(),
+    };
+    setSessions((prevSessions) => [session, ...prevSessions]);
     setIsRunning(false);
     const remaining = timerDeadline ? Math.max(0, Math.ceil((timerDeadline - Date.now()) / 1000)) : timeLeft;
     setTimeLeft(remaining);
     setTimerDeadline(null);
     setTimerStartedAt(null);
+    setTimerSessionId(null);
   };
 
   const resetTimer = () => {
@@ -404,6 +427,7 @@ function App() {
     setTimeLeft(timerMinutes * 60);
     setTimerDeadline(null);
     setTimerStartedAt(null);
+    setTimerSessionId(null);
   };
 
   const addNote = () => {
@@ -505,7 +529,7 @@ function App() {
     return todaySessions
       .map((session) => {
         const startDate = session.startTime ? new Date(session.startTime) : new Date(`${session.date}T09:00:00`);
-        const endDate = new Date(startDate.getTime() + Math.max(1, session.duration) * 60_000);
+        const endDate = session.endTime ? new Date(session.endTime) : new Date(startDate.getTime() + Math.max(1, session.duration) * 60_000);
         const formatTime = (value: Date) => `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
         return {
           id: session.id,
