@@ -234,6 +234,9 @@ function App() {
   const [selectedSubject, setSelectedSubject] = useState<Subject | '전체'>('전체');
   const [editingCell, setEditingCell] = useState<{ hour: number; idx: number } | null>(null);
   const [editingSubject, setEditingSubject] = useState<Subject>('국어(화법과 작문)');
+  const [editingArea, setEditingArea] = useState('');
+  const [editingStartSlot, setEditingStartSlot] = useState(0);
+  const [editingEndSlot, setEditingEndSlot] = useState(0);
 
   useEffect(() => {
     localStorage.setItem('study-plans', JSON.stringify(plans));
@@ -470,58 +473,86 @@ function App() {
     };
   };
 
-  const splitSessionForSlot = (session: StudySession, slotStart: number, slotEnd: number) => {
+  const splitSessionForRange = (session: StudySession, rangeStart: number, rangeEnd: number) => {
     if (!session.startTime || !session.endTime) return [session];
     const a = new Date(session.startTime).getTime();
     const b = new Date(session.endTime).getTime();
-    if (b <= slotStart || a >= slotEnd) return [session];
+    if (b <= rangeStart || a >= rangeEnd) return [session];
 
     const parts: StudySession[] = [];
-    if (a < slotStart) {
-      const beforeDuration = Math.max(1, Math.round((slotStart - a) / 60000));
+    if (a < rangeStart) {
+      const beforeDuration = Math.max(1, Math.round((rangeStart - a) / 60000));
       parts.push({
         ...session,
         id: crypto.randomUUID(),
-        endTime: new Date(slotStart).toISOString(),
+        endTime: new Date(rangeStart).toISOString(),
         duration: beforeDuration,
       });
     }
-    if (b > slotEnd) {
-      const afterDuration = Math.max(1, Math.round((b - slotEnd) / 60000));
+    if (b > rangeEnd) {
+      const afterDuration = Math.max(1, Math.round((b - rangeEnd) / 60000));
       parts.push({
         ...session,
         id: crypto.randomUUID(),
-        startTime: new Date(slotEnd).toISOString(),
+        startTime: new Date(rangeEnd).toISOString(),
         duration: afterDuration,
       });
     }
     return parts;
   };
 
-  const addOrReplaceCell = (hour: number, idx: number, subject: Subject) => {
-    const { startIso, endIso, slotStart, slotEnd } = getSlotRange(hour, idx);
+  const getSlotIndex = (hour: number, idx: number) => hour * 6 + idx;
+  const getSlotFromIndex = (slotIndex: number) => ({ hour: Math.floor(slotIndex / 6), idx: slotIndex % 6 });
+  const getSlotLabel = (slotIndex: number) => {
+    const { hour, idx } = getSlotFromIndex(slotIndex);
+    return `${String(hour).padStart(2, '0')}:${String(idx * 10).padStart(2, '0')}`;
+  };
+
+  const addOrReplaceRange = (startSlot: number, endSlot: number, subject: Subject, area: string) => {
+    const normalizedStart = Math.min(startSlot, endSlot);
+    const normalizedEnd = Math.max(startSlot, endSlot);
+    const startCell = getSlotFromIndex(normalizedStart);
+    const endCell = getSlotFromIndex(normalizedEnd);
+    const startMeta = getSlotRange(startCell.hour, startCell.idx);
+    const endMeta = getSlotRange(endCell.hour, endCell.idx);
+    const rangeStart = startMeta.slotStart;
+    const rangeEnd = endMeta.slotEnd;
+    const durationMinutes = Math.max(10, Math.round((rangeEnd - rangeStart) / 60000));
+
     const session: StudySession = {
       id: crypto.randomUUID(),
       subject,
-      area: '',
-      duration: 10,
+      area: area.trim(),
+      duration: durationMinutes,
       date: getToday(),
       memo: '수동 편집',
-      startTime: startIso,
-      endTime: endIso,
+      startTime: startMeta.startIso,
+      endTime: new Date(rangeEnd).toISOString(),
     };
 
     setSessions((prev) => {
-      const updated = prev.flatMap((s) => splitSessionForSlot(s, slotStart, slotEnd));
+      const updated = prev.flatMap((s) => splitSessionForRange(s, rangeStart, rangeEnd));
       return [session, ...updated];
     });
     setEditingCell(null);
+    setEditingArea('');
+    setEditingStartSlot(normalizedStart);
+    setEditingEndSlot(normalizedEnd);
   };
 
-  const clearCell = (hour: number, idx: number) => {
-    const { slotStart, slotEnd } = getSlotRange(hour, idx);
-    setSessions((prev) => prev.flatMap((s) => splitSessionForSlot(s, slotStart, slotEnd)));
+  const clearRange = (startSlot: number, endSlot: number) => {
+    const normalizedStart = Math.min(startSlot, endSlot);
+    const normalizedEnd = Math.max(startSlot, endSlot);
+    const startCell = getSlotFromIndex(normalizedStart);
+    const endCell = getSlotFromIndex(normalizedEnd);
+    const rangeStart = getSlotRange(startCell.hour, startCell.idx).slotStart;
+    const rangeEnd = getSlotRange(endCell.hour, endCell.idx).slotEnd;
+
+    setSessions((prev) => prev.flatMap((s) => splitSessionForRange(s, rangeStart, rangeEnd)));
     setEditingCell(null);
+    setEditingArea('');
+    setEditingStartSlot(normalizedStart);
+    setEditingEndSlot(normalizedEnd);
   };
 
   const toggleNoteStatus = (id: string) => {
@@ -603,6 +634,17 @@ function App() {
 
   const totalStudyTime = Math.round(totalHours / 60);
   const todaySessions = useMemo(() => sessions.filter((session) => session.date === getToday()), [sessions]);
+
+  const getCellDetails = (hour: number, idx: number) => {
+    const { slotStart, slotEnd } = getSlotRange(hour, idx);
+    const matchingSession = todaySessions.find((session) => {
+      const sessionStart = session.startTime ? new Date(session.startTime).getTime() : new Date(`${session.date}T09:00:00`).getTime();
+      const sessionEnd = session.endTime ? new Date(session.endTime).getTime() : sessionStart + Math.max(1, session.duration) * 60 * 1000;
+      return sessionStart < slotEnd && sessionEnd > slotStart;
+    });
+
+    return matchingSession ? { subject: matchingSession.subject as Subject, area: matchingSession.area } : null;
+  };
 
   // Build a 24h x 6-cell grid, but each cell shows 10 minute-level subsegments.
   const timetableGrid = useMemo(() => {
@@ -991,7 +1033,15 @@ function App() {
                             className="timetable-cell"
                             title={cell.subject ?? ''}
                             style={{ cursor: 'pointer' }}
-                            onClick={() => { setEditingCell({ hour, idx }); setEditingSubject((cell.subject as Subject) ?? '국어(화법과 작문)'); }}
+                            onClick={() => {
+                              const details = getCellDetails(hour, idx);
+                              const slotIndex = getSlotIndex(hour, idx);
+                              setEditingCell({ hour, idx });
+                              setEditingSubject((details?.subject ?? (cell.subject as Subject)) ?? '국어(화법과 작문)');
+                              setEditingArea(details?.area ?? '');
+                              setEditingStartSlot(slotIndex);
+                              setEditingEndSlot(slotIndex);
+                            }}
                           >
                             {Array.from({ length: 10 }, (_, minuteIndex) => {
                               const subject = cell.minutes[minuteIndex];
@@ -1012,15 +1062,34 @@ function App() {
               </div>
               {editingCell && (
                 <div className="card timetable-edit-card" style={{ marginTop: 8, width: '100%' }}>
-                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>편집: {String(editingCell.hour).padStart(2, '0')}:{String(editingCell.idx * 10).padStart(2, '0')}</div>
-                    <div className="row" style={{ gap: 8 }}>
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div>편집 범위: {getSlotLabel(editingStartSlot)} ~ {getSlotLabel(editingEndSlot)}</div>
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                      <select value={editingStartSlot} onChange={(e) => {
+                        const next = Number(e.target.value);
+                        setEditingStartSlot(next);
+                        setEditingEndSlot((prev) => Math.max(prev, next));
+                      }}>
+                        {Array.from({ length: 24 * 6 }, (_, index) => (
+                          <option key={`start-${index}`} value={index}>{getSlotLabel(index)}</option>
+                        ))}
+                      </select>
+                      <select value={editingEndSlot} onChange={(e) => {
+                        const next = Number(e.target.value);
+                        setEditingEndSlot(next);
+                        setEditingStartSlot((prev) => Math.min(prev, next));
+                      }}>
+                        {Array.from({ length: 24 * 6 }, (_, index) => (
+                          <option key={`end-${index}`} value={index}>{getSlotLabel(index)}</option>
+                        ))}
+                      </select>
+                      <input value={editingArea} onChange={(e) => setEditingArea(e.target.value)} placeholder="영역/단원" style={{ minWidth: 140, padding: '6px 8px', borderRadius: 8, border: '1px solid #e5e7eb' }} />
                       <select value={editingSubject} onChange={(e) => setEditingSubject(e.target.value as Subject)}>
                         {subjectOptions.map((s) => <option key={s} value={s}>{s}</option>)}
                       </select>
-                      <button onClick={() => addOrReplaceCell(editingCell.hour, editingCell.idx, editingSubject)} style={{ padding: '6px 10px', borderRadius: 8, background: '#10b981', color: 'white', border: 'none' }}>저장</button>
-                      <button onClick={() => clearCell(editingCell.hour, editingCell.idx)} style={{ padding: '6px 10px', borderRadius: 8, background: '#ef4444', color: 'white', border: 'none' }}>삭제</button>
-                      <button onClick={() => setEditingCell(null)} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}>취소</button>
+                      <button onClick={() => addOrReplaceRange(editingStartSlot, editingEndSlot, editingSubject, editingArea)} style={{ padding: '6px 10px', borderRadius: 8, background: '#10b981', color: 'white', border: 'none' }}>저장</button>
+                      <button onClick={() => clearRange(editingStartSlot, editingEndSlot)} style={{ padding: '6px 10px', borderRadius: 8, background: '#ef4444', color: 'white', border: 'none' }}>삭제</button>
+                      <button onClick={() => { setEditingCell(null); setEditingArea(''); setEditingStartSlot(0); setEditingEndSlot(0); }} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}>취소</button>
                     </div>
                   </div>
                 </div>
