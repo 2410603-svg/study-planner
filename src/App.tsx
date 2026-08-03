@@ -232,6 +232,8 @@ function App() {
   const [cloudStatus, setCloudStatus] = useState(isFirebaseConfigured ? '클라우드 저장 준비됨' : '데모 Firebase 설정으로 로컬 저장만 사용 중');
   const [statsRange, setStatsRange] = useState<'day' | 'week' | 'month'>('week');
   const [selectedSubject, setSelectedSubject] = useState<Subject | '전체'>('전체');
+  const [editingCell, setEditingCell] = useState<{ hour: number; idx: number } | null>(null);
+  const [editingSubject, setEditingSubject] = useState<Subject>('국어(화법과 작문)');
 
   useEffect(() => {
     localStorage.setItem('study-plans', JSON.stringify(plans));
@@ -454,6 +456,57 @@ function App() {
     setSessions((prev) => prev.filter((session) => session.id !== id));
   };
 
+  const addOrReplaceCell = (hour: number, idx: number, subject: Subject) => {
+    // create a 10-minute session at the given hour/idx for today
+    const startMinute = hour * 60 + idx * 10;
+    const hh = Math.floor(startMinute / 60);
+    const mm = startMinute % 60;
+    const startIso = `${getToday()}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+    const endIso = new Date(new Date(startIso).getTime() + 10 * 60 * 1000).toISOString();
+    const session: StudySession = {
+      id: crypto.randomUUID(),
+      subject,
+      area: '',
+      duration: 10,
+      date: getToday(),
+      memo: '수동 편집',
+      startTime: startIso,
+      endTime: endIso,
+    };
+    // remove any existing sessions that overlap this 10-min slot
+    setSessions((prev) => {
+      const slotStart = new Date(startIso).getTime();
+      const slotEnd = new Date(endIso).getTime();
+      const filtered = prev.filter((s) => {
+        if (!s.startTime || !s.endTime) return true;
+        const a = new Date(s.startTime).getTime();
+        const b = new Date(s.endTime).getTime();
+        // keep sessions that do NOT overlap
+        return b <= slotStart || a >= slotEnd;
+      });
+      return [session, ...filtered];
+    });
+    setEditingCell(null);
+  };
+
+  const clearCell = (hour: number, idx: number) => {
+    const startMinute = hour * 60 + idx * 10;
+    const hh = Math.floor(startMinute / 60);
+    const mm = startMinute % 60;
+    const startIso = `${getToday()}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+    const endIso = new Date(new Date(startIso).getTime() + 10 * 60 * 1000).toISOString();
+    const slotStart = new Date(startIso).getTime();
+    const slotEnd = new Date(endIso).getTime();
+    setSessions((prev) => prev.filter((s) => {
+      if (!s.startTime || !s.endTime) return true;
+      const a = new Date(s.startTime).getTime();
+      const b = new Date(s.endTime).getTime();
+      // remove sessions that overlap
+      return b <= slotStart || a >= slotEnd;
+    }));
+    setEditingCell(null);
+  };
+
   const toggleNoteStatus = (id: string) => {
     setNotes((prev) => prev.map((note) => (note.id === id ? { ...note, status: note.status === '미복습' ? '복습 완료' : '미복습' } : note)));
   };
@@ -534,11 +587,11 @@ function App() {
   const totalStudyTime = Math.round(totalHours / 60);
   const todaySessions = useMemo(() => sessions.filter((session) => session.date === getToday()), [sessions]);
 
-  // Build a 24h x N-segments grid (segments = 15min) where each cell is a subject key or null
+  // Build a 24h x N-segments grid (segments = 10min) where each cell is a subject key or null
   const timetableGrid = useMemo(() => {
-    const segmentLength = 15; // minutes per cell
-    const segmentsPerDay = (24 * 60) / segmentLength; // 96
-    const grid: (string | null)[][] = Array.from({ length: 24 }, () => Array.from({ length: segmentsPerDay }, () => null));
+    const segmentLength = 10; // minutes per cell (10-minute granularity)
+    const segmentsPerHour = 60 / segmentLength; // 6
+    const grid: (string | null)[][] = Array.from({ length: 24 }, () => Array.from({ length: segmentsPerHour }, () => null));
 
     todaySessions.forEach((session) => {
       const start = session.startTime ? new Date(session.startTime) : new Date(`${session.date}T09:00:00`);
@@ -908,7 +961,8 @@ function App() {
                             key={`${hour}-${idx}`}
                             className="timetable-cell"
                             title={cell ?? ''}
-                            style={{ background: cell ? subjectColors[cell] : 'transparent' }}
+                            style={{ background: cell ? subjectColors[cell] : 'transparent', cursor: 'pointer' }}
+                            onClick={() => { setEditingCell({ hour, idx }); setEditingSubject((cell as Subject) ?? '국어(화법과 작문)'); }}
                           />
                         ))}
                       </div>
@@ -916,6 +970,21 @@ function App() {
                   ))}
                 </div>
               </div>
+              {editingCell && (
+                <div className="card timetable-edit-card" style={{ marginTop: 8, width: '100%' }}>
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>편집: {String(editingCell.hour).padStart(2, '0')}:{String(editingCell.idx * 10).padStart(2, '0')}</div>
+                    <div className="row" style={{ gap: 8 }}>
+                      <select value={editingSubject} onChange={(e) => setEditingSubject(e.target.value as Subject)}>
+                        {subjectOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <button onClick={() => addOrReplaceCell(editingCell.hour, editingCell.idx, editingSubject)} style={{ padding: '6px 10px', borderRadius: 8, background: '#10b981', color: 'white', border: 'none' }}>저장</button>
+                      <button onClick={() => clearCell(editingCell.hour, editingCell.idx)} style={{ padding: '6px 10px', borderRadius: 8, background: '#ef4444', color: 'white', border: 'none' }}>삭제</button>
+                      <button onClick={() => setEditingCell(null)} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}>취소</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
