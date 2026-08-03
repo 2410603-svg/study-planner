@@ -456,13 +456,50 @@ function App() {
     setSessions((prev) => prev.filter((session) => session.id !== id));
   };
 
-  const addOrReplaceCell = (hour: number, idx: number, subject: Subject) => {
-    // create a 10-minute session at the given hour/idx for today
+  const getSlotRange = (hour: number, idx: number) => {
     const startMinute = hour * 60 + idx * 10;
     const hh = Math.floor(startMinute / 60);
     const mm = startMinute % 60;
     const startIso = `${getToday()}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
     const endIso = new Date(new Date(startIso).getTime() + 10 * 60 * 1000).toISOString();
+    return {
+      startIso,
+      endIso,
+      slotStart: new Date(startIso).getTime(),
+      slotEnd: new Date(endIso).getTime(),
+    };
+  };
+
+  const splitSessionForSlot = (session: StudySession, slotStart: number, slotEnd: number) => {
+    if (!session.startTime || !session.endTime) return [session];
+    const a = new Date(session.startTime).getTime();
+    const b = new Date(session.endTime).getTime();
+    if (b <= slotStart || a >= slotEnd) return [session];
+
+    const parts: StudySession[] = [];
+    if (a < slotStart) {
+      const beforeDuration = Math.max(1, Math.round((slotStart - a) / 60000));
+      parts.push({
+        ...session,
+        id: crypto.randomUUID(),
+        endTime: new Date(slotStart).toISOString(),
+        duration: beforeDuration,
+      });
+    }
+    if (b > slotEnd) {
+      const afterDuration = Math.max(1, Math.round((b - slotEnd) / 60000));
+      parts.push({
+        ...session,
+        id: crypto.randomUUID(),
+        startTime: new Date(slotEnd).toISOString(),
+        duration: afterDuration,
+      });
+    }
+    return parts;
+  };
+
+  const addOrReplaceCell = (hour: number, idx: number, subject: Subject) => {
+    const { startIso, endIso, slotStart, slotEnd } = getSlotRange(hour, idx);
     const session: StudySession = {
       id: crypto.randomUUID(),
       subject,
@@ -473,37 +510,17 @@ function App() {
       startTime: startIso,
       endTime: endIso,
     };
-    // remove any existing sessions that overlap this 10-min slot
+
     setSessions((prev) => {
-      const slotStart = new Date(startIso).getTime();
-      const slotEnd = new Date(endIso).getTime();
-      const filtered = prev.filter((s) => {
-        if (!s.startTime || !s.endTime) return true;
-        const a = new Date(s.startTime).getTime();
-        const b = new Date(s.endTime).getTime();
-        // keep sessions that do NOT overlap
-        return b <= slotStart || a >= slotEnd;
-      });
-      return [session, ...filtered];
+      const updated = prev.flatMap((s) => splitSessionForSlot(s, slotStart, slotEnd));
+      return [session, ...updated];
     });
     setEditingCell(null);
   };
 
   const clearCell = (hour: number, idx: number) => {
-    const startMinute = hour * 60 + idx * 10;
-    const hh = Math.floor(startMinute / 60);
-    const mm = startMinute % 60;
-    const startIso = `${getToday()}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
-    const endIso = new Date(new Date(startIso).getTime() + 10 * 60 * 1000).toISOString();
-    const slotStart = new Date(startIso).getTime();
-    const slotEnd = new Date(endIso).getTime();
-    setSessions((prev) => prev.filter((s) => {
-      if (!s.startTime || !s.endTime) return true;
-      const a = new Date(s.startTime).getTime();
-      const b = new Date(s.endTime).getTime();
-      // remove sessions that overlap
-      return b <= slotStart || a >= slotEnd;
-    }));
+    const { slotStart, slotEnd } = getSlotRange(hour, idx);
+    setSessions((prev) => prev.flatMap((s) => splitSessionForSlot(s, slotStart, slotEnd)));
     setEditingCell(null);
   };
 
