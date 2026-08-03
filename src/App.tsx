@@ -502,21 +502,22 @@ function App() {
   const totalStudyTime = Math.round(totalHours / 60);
   const todaySessions = useMemo(() => sessions.filter((session) => session.date === getToday()), [sessions]);
   const dailyTimetable = useMemo(() => {
-    const slots = Array.from({ length: 24 }, () => 0);
-    todaySessions.forEach((session) => {
-      const startDate = session.startTime ? new Date(session.startTime) : new Date(`${session.date}T12:00:00`);
-      const startMinute = startDate.getHours() * 60 + startDate.getMinutes();
-      const endMinute = startMinute + Math.max(1, session.duration);
-      let cursor = startMinute;
-      while (cursor < endMinute) {
-        const hour = Math.floor(cursor / 60) % 24;
-        const nextCursor = Math.min(endMinute, Math.floor(cursor / 60 + 1) * 60);
-        const chunkMinutes = Math.max(1, nextCursor - cursor);
-        slots[hour] += Math.min(chunkMinutes, 60);
-        cursor = nextCursor;
-      }
-    });
-    return slots;
+    return todaySessions
+      .map((session) => {
+        const startDate = session.startTime ? new Date(session.startTime) : new Date(`${session.date}T09:00:00`);
+        const endDate = new Date(startDate.getTime() + Math.max(1, session.duration) * 60_000);
+        const formatTime = (value: Date) => `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
+        return {
+          id: session.id,
+          subject: session.subject,
+          area: session.area,
+          duration: session.duration,
+          startTime: formatTime(startDate),
+          endTime: formatTime(endDate),
+          startMinutes: startDate.getHours() * 60 + startDate.getMinutes(),
+        };
+      })
+      .sort((a, b) => a.startMinutes - b.startMinutes);
   }, [todaySessions]);
 
   const trendData = useMemo(() => {
@@ -837,13 +838,18 @@ function App() {
           <div className="card">
             <h3>오늘의 시간표</h3>
             <div className="daily-timetable">
-              {dailyTimetable.map((minutes, hour) => (
-                <div key={`${hour}-slot`} className="timetable-row">
-                  <span className="timetable-hour">{String(hour).padStart(2, '0')}:00</span>
-                  <div className="timetable-bar">
-                    <div className="timetable-fill" style={{ width: `${Math.min(100, Math.max(4, (minutes / 60) * 100))}%` }} />
+              {dailyTimetable.length === 0 ? (
+                <p style={{ margin: 0, color: '#64748b' }}>오늘의 공부 기록이 아직 없습니다. 타이머로 세션을 시작해 보세요.</p>
+              ) : dailyTimetable.map((item) => (
+                <div key={item.id} className="study-block-card">
+                  <div className="study-block-time">
+                    <strong>{item.startTime}</strong>
+                    <span>~ {item.endTime}</span>
                   </div>
-                  <span className="timetable-value">{minutes}분</span>
+                  <div className="study-block-info">
+                    <div className="study-block-title">{item.subject}</div>
+                    <div className="study-block-meta">{item.area || '영역 미기재'} · {item.duration}분</div>
+                  </div>
                 </div>
               ))}
             </div>
