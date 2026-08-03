@@ -32,6 +32,17 @@ a { color: inherit; text-decoration: none; }
 .study-block-info { flex: 1; }
 .study-block-title { font-weight: 700; color: #111827; }
 .study-block-meta { font-size: 13px; color: #64748b; margin-top: 2px; }
+
+.timetable-wrapper { overflow: auto; }
+.timetable-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.timetable-hours { width: 56px; }
+.timetable-grid-header { flex: 1; height: 8px; background: linear-gradient(90deg, #f1f5f9 0%, #fff 100%); border-radius: 6px; }
+.timetable-grid { display: flex; flex-direction: column; gap: 6px; overflow: auto; }
+.timetable-row { display: flex; align-items: center; gap: 8px; }
+.timetable-hour { width: 56px; color: #64748b; font-size: 12px; text-align: right; padding-right: 8px; }
+.timetable-cells { display: grid; grid-auto-flow: column; grid-auto-columns: 6px; gap: 2px; align-items: center; }
+.timetable-cell { width: 6px; height: 18px; border-radius: 2px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02); }
+
 @media (max-width: 768px) {
   .container { padding: 10px; }
   .card { padding: 12px; }

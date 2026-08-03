@@ -3,6 +3,14 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { isFirebaseConfigured, loadFromCloud, saveToCloud } from './firebase';
 import { buildSubjectComparison, buildSubjectDetailData, buildSubjectGrowth, buildTrendData } from './statistics';
 
+const subjectColors: Record<string, string> = {
+  '국어(화법과 작문)': '#f59e0b',
+  '수학(확률과 통계)': '#ef4444',
+  '영어': '#111827',
+  '한국사': '#8b5cf6',
+  '경제': '#10b981',
+  '사회문화': '#06b6d4',
+};
 type Subject = '국어(화법과 작문)' | '수학(확률과 통계)' | '영어' | '한국사' | '경제' | '사회문화';
 
 type StudyPlan = {
@@ -525,23 +533,26 @@ function App() {
 
   const totalStudyTime = Math.round(totalHours / 60);
   const todaySessions = useMemo(() => sessions.filter((session) => session.date === getToday()), [sessions]);
-  const dailyTimetable = useMemo(() => {
-    return todaySessions
-      .map((session) => {
-        const startDate = session.startTime ? new Date(session.startTime) : new Date(`${session.date}T09:00:00`);
-        const endDate = session.endTime ? new Date(session.endTime) : new Date(startDate.getTime() + Math.max(1, session.duration) * 60_000);
-        const formatTime = (value: Date) => `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
-        return {
-          id: session.id,
-          subject: session.subject,
-          area: session.area,
-          duration: session.duration,
-          startTime: formatTime(startDate),
-          endTime: formatTime(endDate),
-          startMinutes: startDate.getHours() * 60 + startDate.getMinutes(),
-        };
-      })
-      .sort((a, b) => a.startMinutes - b.startMinutes);
+
+  // Build a 24h x N-segments grid (segments = 15min) where each cell is a subject key or null
+  const timetableGrid = useMemo(() => {
+    const segmentLength = 15; // minutes per cell
+    const segmentsPerDay = (24 * 60) / segmentLength; // 96
+    const grid: (string | null)[][] = Array.from({ length: 24 }, () => Array.from({ length: segmentsPerDay }, () => null));
+
+    todaySessions.forEach((session) => {
+      const start = session.startTime ? new Date(session.startTime) : new Date(`${session.date}T09:00:00`);
+      const startMinute = start.getHours() * 60 + start.getMinutes();
+      const endMinute = startMinute + Math.max(1, session.duration);
+      for (let m = startMinute; m < endMinute; m++) {
+        const minuteOfDay = ((m % (24 * 60)) + (24 * 60)) % (24 * 60);
+        const hour = Math.floor(minuteOfDay / 60);
+        const segmentIndex = Math.floor((minuteOfDay % 60) / segmentLength);
+        grid[hour][segmentIndex] = session.subject;
+      }
+    });
+
+    return { grid, segmentLength };
   }, [todaySessions]);
 
   const trendData = useMemo(() => {
@@ -860,22 +871,51 @@ function App() {
           </div>
 
           <div className="card">
-            <h3>오늘의 시간표</h3>
-            <div className="daily-timetable">
-              {dailyTimetable.length === 0 ? (
-                <p style={{ margin: 0, color: '#64748b' }}>오늘의 공부 기록이 아직 없습니다. 타이머로 세션을 시작해 보세요.</p>
-              ) : dailyTimetable.map((item) => (
-                <div key={item.id} className="study-block-card">
-                  <div className="study-block-time">
-                    <strong>{item.startTime}</strong>
-                    <span>~ {item.endTime}</span>
-                  </div>
-                  <div className="study-block-info">
-                    <div className="study-block-title">{item.subject}</div>
-                    <div className="study-block-meta">{item.area || '영역 미기재'} · {item.duration}분</div>
-                  </div>
+            <h3 style={{ marginBottom: 8 }}>오늘의 타임테이블 (24시간)</h3>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ minWidth: 120 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ color: '#6b7280', fontSize: 12 }}>TIMERS</div>
+                  {Object.keys(subjectColors).map((subject) => {
+                    const minutes = sessions.filter((s) => s.subject === subject).reduce((sum, s) => sum + s.duration, 0);
+                    const hh = Math.floor(minutes / 60);
+                    const mm = minutes % 60;
+                    return (
+                      <div key={subject} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <span style={{ width: 10, height: 24, background: subjectColors[subject], borderRadius: 4 }} />
+                          <span style={{ fontSize: 14 }}>{subject}</span>
+                        </div>
+                        <div style={{ color: '#6b7280', fontSize: 13 }}>{String(hh).padStart(2, '0')}H {String(mm).padStart(2, '0')}M</div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              </div>
+
+              <div className="timetable-wrapper">
+                <div className="timetable-header">
+                  <div className="timetable-hours" />
+                  <div className="timetable-grid-header" />
+                </div>
+                <div className="timetable-grid" role="grid">
+                  {timetableGrid.grid.map((row, hour) => (
+                    <div key={`hour-${hour}`} className="timetable-row" role="row">
+                      <div className="timetable-hour">{String(hour).padStart(2, '0')}</div>
+                      <div className="timetable-cells" role="rowgroup">
+                        {row.map((cell, idx) => (
+                          <div
+                            key={`${hour}-${idx}`}
+                            className="timetable-cell"
+                            title={cell ?? ''}
+                            style={{ background: cell ? subjectColors[cell] : 'transparent' }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
 
