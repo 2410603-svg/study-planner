@@ -26,6 +26,12 @@ a { color: inherit; text-decoration: none; }
 .stats-shell { background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%); }
 .stats-select { min-width: 180px; border: 1px solid #cbd5e1; border-radius: 999px; padding: 8px 12px; background: white; }
 .subject-growth-item:hover { transform: translateY(-1px); box-shadow: 0 6px 12px rgba(15, 23, 42, 0.06); }
+.daily-timetable { display: grid; gap: 8px; margin-top: 8px; }
+.timetable-row { display: grid; grid-template-columns: 56px 1fr 48px; align-items: center; gap: 10px; }
+.timetable-hour { font-size: 12px; color: #64748b; }
+.timetable-bar { height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+.timetable-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #6366f1 0%, #38bdf8 100%); }
+.timetable-value { font-size: 12px; color: #334155; text-align: right; }
 @media (max-width: 768px) {
   .container { padding: 10px; }
   .card { padding: 12px; }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { isFirebaseConfigured, loadFromCloud, saveToCloud } from './firebase';
 import { buildSubjectComparison, buildSubjectDetailData, buildSubjectGrowth, buildTrendData } from './statistics';
@@ -29,6 +29,7 @@ type StudySession = {
   duration: number;
   date: string;
   memo: string;
+  startTime?: string;
 };
 
 type WrongAnswer = {
@@ -189,6 +190,8 @@ function App() {
   const [timerMinutes, setTimerMinutes] = useState(25);
   const [timeLeft, setTimeLeft] = useState(25 * 60);
   const [isRunning, setIsRunning] = useState(false);
+  const [timerStartedAt, setTimerStartedAt] = useState<string | null>(null);
+  const [timerDeadline, setTimerDeadline] = useState<number | null>(null);
   const [timerMode, setTimerMode] = useState<'집중' | '휴식'>('집중');
   const [timerSubject, setTimerSubject] = useState<Subject>('국어(화법과 작문)');
   const [timerArea, setTimerArea] = useState('');
@@ -233,31 +236,73 @@ function App() {
     localStorage.setItem('study-notes', JSON.stringify(notes));
   }, [notes]);
 
+  const finishTimer = useCallback(() => {
+    const duration = Math.max(1, timerMinutes);
+    const startedAt = timerStartedAt ?? new Date().toISOString();
+    const session: StudySession = {
+      id: crypto.randomUUID(),
+      subject: timerSubject,
+      area: timerArea,
+      duration,
+      date: getToday(),
+      memo: timerMemo || `${timerMode} 시간 완료`,
+      startTime: startedAt,
+    };
+    setSessions((prevSessions) => [session, ...prevSessions]);
+    setTimeLeft(0);
+    setIsRunning(false);
+    setTimerStartedAt(null);
+    setTimerDeadline(null);
+    window.alert(`${timerMode} 시간이 종료되었습니다.`);
+  }, [timerArea, timerMemo, timerMinutes, timerMode, timerStartedAt, timerSubject]);
+
   useEffect(() => {
-    if (!isRunning) return;
-    const timer = window.setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          window.clearInterval(timer);
-          setIsRunning(false);
-          const duration = Math.max(1, timerMinutes);
-          const session: StudySession = {
-            id: crypto.randomUUID(),
-            subject: timerSubject,
-            area: timerArea,
-            duration,
-            date: getToday(),
-            memo: timerMemo || `${timerMode} 시간 완료`,
-          };
-          setSessions((prevSessions) => [session, ...prevSessions]);
-          window.alert(`${timerMode} 시간이 종료되었습니다.`);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    if (!isRunning || !timerDeadline) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((timerDeadline - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        finishTimer();
+      }
+    };
+
+    tick();
+    const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, [isRunning, timerMinutes, timerMode, timerMemo, timerSubject, timerArea]);
+  }, [finishTimer, isRunning, timerDeadline]);
+
+  useEffect(() => {
+    if (!isRunning || !timerDeadline) return;
+
+    const syncTimer = () => {
+      const remaining = Math.max(0, Math.ceil((timerDeadline - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        finishTimer();
+      }
+    };
+
+    document.addEventListener('visibilitychange', syncTimer);
+    window.addEventListener('focus', syncTimer);
+    return () => {
+      document.removeEventListener('visibilitychange', syncTimer);
+      window.removeEventListener('focus', syncTimer);
+    };
+  }, [finishTimer, isRunning, timerDeadline]);
+
+  useEffect(() => {
+    localStorage.setItem('study-timer-state', JSON.stringify({
+      isRunning,
+      timeLeft,
+      timerMinutes,
+      timerMode,
+      timerSubject,
+      timerArea,
+      timerMemo,
+      timerStartedAt,
+      timerDeadline,
+    }));
+  }, [isRunning, timeLeft, timerArea, timerDeadline, timerMemo, timerMinutes, timerMode, timerStartedAt, timerSubject]);
 
   useEffect(() => {
     if (!notificationSetting.enabled || !('Notification' in window) || Notification.permission !== 'granted') {
@@ -338,17 +383,27 @@ function App() {
   };
 
   const startTimer = () => {
-    if (timeLeft === 0) {
-      setTimeLeft(timerMinutes * 60);
-    }
+    const durationSeconds = Math.max(60, timerMinutes * 60);
+    const startedAt = new Date();
+    setTimeLeft(durationSeconds);
+    setTimerStartedAt(startedAt.toISOString());
+    setTimerDeadline(startedAt.getTime() + durationSeconds * 1000);
     setIsRunning(true);
   };
 
-  const pauseTimer = () => setIsRunning(false);
+  const pauseTimer = () => {
+    setIsRunning(false);
+    const remaining = timerDeadline ? Math.max(0, Math.ceil((timerDeadline - Date.now()) / 1000)) : timeLeft;
+    setTimeLeft(remaining);
+    setTimerDeadline(null);
+    setTimerStartedAt(null);
+  };
 
   const resetTimer = () => {
     setIsRunning(false);
     setTimeLeft(timerMinutes * 60);
+    setTimerDeadline(null);
+    setTimerStartedAt(null);
   };
 
   const addNote = () => {
@@ -445,6 +500,24 @@ function App() {
   };
 
   const totalStudyTime = Math.round(totalHours / 60);
+  const todaySessions = useMemo(() => sessions.filter((session) => session.date === getToday()), [sessions]);
+  const dailyTimetable = useMemo(() => {
+    const slots = Array.from({ length: 24 }, () => 0);
+    todaySessions.forEach((session) => {
+      const startDate = session.startTime ? new Date(session.startTime) : new Date(`${session.date}T12:00:00`);
+      const startMinute = startDate.getHours() * 60 + startDate.getMinutes();
+      const endMinute = startMinute + Math.max(1, session.duration);
+      let cursor = startMinute;
+      while (cursor < endMinute) {
+        const hour = Math.floor(cursor / 60) % 24;
+        const nextCursor = Math.min(endMinute, Math.floor(cursor / 60 + 1) * 60);
+        const chunkMinutes = Math.max(1, nextCursor - cursor);
+        slots[hour] += Math.min(chunkMinutes, 60);
+        cursor = nextCursor;
+      }
+    });
+    return slots;
+  }, [todaySessions]);
 
   const trendData = useMemo(() => {
     const filteredSessions = selectedSubject === '전체' ? sessions : sessions.filter((session) => session.subject === selectedSubject);
@@ -758,6 +831,21 @@ function App() {
                 <strong>{selectedSubject === '전체' ? '전체 과목' : selectedSubject}</strong>
                 <span className="badge">{selectedSubjectDetailData.reduce((sum, item) => sum + item.minutes, 0)}분</span>
               </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3>오늘의 시간표</h3>
+            <div className="daily-timetable">
+              {dailyTimetable.map((minutes, hour) => (
+                <div key={`${hour}-slot`} className="timetable-row">
+                  <span className="timetable-hour">{String(hour).padStart(2, '0')}:00</span>
+                  <div className="timetable-bar">
+                    <div className="timetable-fill" style={{ width: `${Math.min(100, Math.max(4, (minutes / 60) * 100))}%` }} />
+                  </div>
+                  <span className="timetable-value">{minutes}분</span>
+                </div>
+              ))}
             </div>
           </div>
 
