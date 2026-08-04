@@ -252,18 +252,20 @@ function App() {
   }, [notes]);
 
   const finishTimer = useCallback(() => {
-    const durationSeconds = Math.max(60, timerMinutes * 60);
-    const startedAt = timerStartedAt ?? new Date().toISOString();
-    const duration = Math.max(1, Math.round(durationSeconds / 60));
+    if (!timerStartedAt || !timerSessionId) return;
+
+    const endedAt = new Date();
+    const elapsedSeconds = Math.max(1, Math.round((endedAt.getTime() - new Date(timerStartedAt).getTime()) / 1000));
+    const duration = Math.max(1, Math.ceil(elapsedSeconds / 60));
     const session: StudySession = {
-      id: timerSessionId ?? crypto.randomUUID(),
+      id: timerSessionId,
       subject: timerSubject,
       area: timerArea,
       duration,
       date: getToday(),
-      memo: timerMemo || `${timerMode} 시간 완료`,
-      startTime: startedAt,
-      endTime: new Date().toISOString(),
+      memo: timerMemo || `${timerMode} 공부 기록`,
+      startTime: timerStartedAt,
+      endTime: endedAt.toISOString(),
     };
     setSessions((prevSessions) => [session, ...prevSessions]);
     setTimeLeft(0);
@@ -271,42 +273,21 @@ function App() {
     setTimerStartedAt(null);
     setTimerDeadline(null);
     setTimerSessionId(null);
-    window.alert(`${timerMode} 시간이 종료되었습니다.`);
-  }, [timerArea, timerMemo, timerMinutes, timerMode, timerSessionId, timerStartedAt, timerSubject]);
+    window.alert('공부 시간이 기록되었습니다.');
+  }, [timerArea, timerMemo, timerMode, timerSessionId, timerStartedAt, timerSubject]);
 
   useEffect(() => {
-    if (!isRunning || !timerDeadline) return;
+    if (!isRunning || !timerStartedAt) return;
+
     const tick = () => {
-      const remaining = Math.max(0, Math.ceil((timerDeadline - Date.now()) / 1000));
-      setTimeLeft(remaining);
-      if (remaining <= 0) {
-        finishTimer();
-      }
+      const elapsed = Math.max(0, Math.floor((Date.now() - new Date(timerStartedAt).getTime()) / 1000));
+      setTimeLeft(elapsed);
     };
 
     tick();
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, [finishTimer, isRunning, timerDeadline]);
-
-  useEffect(() => {
-    if (!isRunning || !timerDeadline) return;
-
-    const syncTimer = () => {
-      const remaining = Math.max(0, Math.ceil((timerDeadline - Date.now()) / 1000));
-      setTimeLeft(remaining);
-      if (remaining <= 0) {
-        finishTimer();
-      }
-    };
-
-    document.addEventListener('visibilitychange', syncTimer);
-    window.addEventListener('focus', syncTimer);
-    return () => {
-      document.removeEventListener('visibilitychange', syncTimer);
-      window.removeEventListener('focus', syncTimer);
-    };
-  }, [finishTimer, isRunning, timerDeadline]);
+  }, [isRunning, timerStartedAt]);
 
   useEffect(() => {
     localStorage.setItem('study-timer-state', JSON.stringify({
@@ -363,9 +344,10 @@ function App() {
   const weeklyHours = sessions.filter((s) => s.date >= '2026-07-27').reduce((sum, s) => sum + s.duration, 0);
   const latestExam = exams[0];
   const timerLabel = useMemo(() => {
-    const minutes = Math.floor(timeLeft / 60);
+    const hours = Math.floor(timeLeft / 3600);
+    const minutes = Math.floor((timeLeft % 3600) / 60);
     const seconds = timeLeft % 60;
-    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   }, [timeLeft]);
 
   const addPlan = () => {
@@ -402,42 +384,22 @@ function App() {
   };
 
   const startTimer = () => {
-    const durationSeconds = Math.max(60, timerMinutes * 60);
     const startedAt = new Date();
     const sessionId = crypto.randomUUID();
-    setTimeLeft(durationSeconds);
+    setTimeLeft(0);
     setTimerStartedAt(startedAt.toISOString());
-    setTimerDeadline(startedAt.getTime() + durationSeconds * 1000);
+    setTimerDeadline(null);
     setTimerSessionId(sessionId);
     setIsRunning(true);
   };
 
   const pauseTimer = () => {
-    if (!isRunning || !timerSessionId || !timerStartedAt) return;
-    const elapsedSeconds = Math.max(1, Math.round((Date.now() - new Date(timerStartedAt).getTime()) / 1000));
-    const minutes = Math.max(1, Math.round(elapsedSeconds / 60));
-    const session: StudySession = {
-      id: timerSessionId,
-      subject: timerSubject,
-      area: timerArea,
-      duration: minutes,
-      date: getToday(),
-      memo: timerMemo || `${timerMode} 시간 완료`,
-      startTime: timerStartedAt,
-      endTime: new Date().toISOString(),
-    };
-    setSessions((prevSessions) => [session, ...prevSessions]);
-    setIsRunning(false);
-    const remaining = timerDeadline ? Math.max(0, Math.ceil((timerDeadline - Date.now()) / 1000)) : timeLeft;
-    setTimeLeft(remaining);
-    setTimerDeadline(null);
-    setTimerStartedAt(null);
-    setTimerSessionId(null);
+    finishTimer();
   };
 
   const resetTimer = () => {
     setIsRunning(false);
-    setTimeLeft(timerMinutes * 60);
+    setTimeLeft(0);
     setTimerDeadline(null);
     setTimerStartedAt(null);
     setTimerSessionId(null);
@@ -903,18 +865,14 @@ function App() {
       {activeTab === 'timer' && (
         <div className="grid">
           <div className="card">
-            <h3>실제 공부 타이머</h3>
+            <h3>실제 공부 스톱워치</h3>
             <div style={{ fontSize: 56, textAlign: 'center', fontWeight: 700, margin: '12px 0' }}>{timerLabel}</div>
+            <p style={{ margin: '0 0 12px', color: '#6b7280', textAlign: 'center' }}>시작 버튼으로 측정을 시작하고, 종료 버튼으로 기록을 저장합니다.</p>
             <div className="grid grid-2">
               <select value={timerMode} onChange={(e) => setTimerMode(e.target.value as '집중' | '휴식')}>
                 <option value="집중">집중</option>
                 <option value="휴식">휴식</option>
               </select>
-              <input type="number" min="1" value={timerMinutes} onChange={(e) => {
-                const value = Number(e.target.value);
-                setTimerMinutes(value);
-                setTimeLeft(value * 60);
-              }} />
               <select value={timerSubject} onChange={(e) => setTimerSubject(e.target.value as Subject)}>
                 {subjectOptions.map((subject) => <option key={subject} value={subject}>{subject}</option>)}
               </select>
@@ -922,8 +880,8 @@ function App() {
               <input value={timerMemo} onChange={(e) => setTimerMemo(e.target.value)} placeholder="학습 메모" />
             </div>
             <div className="row" style={{ marginTop: 12 }}>
-              <button onClick={startTimer} style={{ padding: '8px 12px', borderRadius: 999, border: 'none', background: '#4f46e5', color: 'white' }}>시작</button>
-              <button onClick={pauseTimer} style={{ padding: '8px 12px', borderRadius: 999, border: '1px solid #d1d5db', background: 'white' }}>일시정지</button>
+              <button onClick={startTimer} style={{ padding: '8px 12px', borderRadius: 999, border: 'none', background: '#4f46e5', color: 'white' }}>{isRunning ? '측정 중' : '시작'}</button>
+              <button onClick={pauseTimer} style={{ padding: '8px 12px', borderRadius: 999, border: '1px solid #d1d5db', background: 'white' }}>종료</button>
               <button onClick={resetTimer} style={{ padding: '8px 12px', borderRadius: 999, border: '1px solid #d1d5db', background: 'white' }}>초기화</button>
             </div>
           </div>
